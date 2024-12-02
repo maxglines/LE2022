@@ -73,7 +73,7 @@ PRISMA_lake <- cbind(date,prisma)
 # MAKE SURE YOU PULL PRISMA_lake_compiled off Google Drive: 
 # https://drive.google.com/drive/u/1/folders/1z6HNn4lAW20FnxJWGRZyuyDgpvSD1sYu
 # And save in Data/PRISMA
-PRISMA_lake <- read.csv('Data/PRISMA/Vnorm/PRISMA_lake_compiled.csv')
+PRISMA_lake <- read.csv('Data/PRISMA/L2W_Vnorm/vnorm_prisma_lake_500clip_noBin.csv')
 
 
 ##### Subsample
@@ -84,7 +84,7 @@ set.seed(1234) # to make runs consistent
 # Which means we subsample 1/9 = 11.1% so 10% is fine
 prsma_sub <- prisma_wide %>%
   rownames_to_column("X") %>% 
-  dplyr::select(-"765") %>% #drop 765 as over half are missing
+  # dplyr::select(-"765") %>% #drop 765 as over half are missing
   group_by(date) %>% 
   dplyr::select(index, c("505":"796")) %>%
   drop_na() %>%
@@ -121,14 +121,109 @@ options(repos = c(
   fawda123 = 'https://fawda123.r-universe.dev',
   CRAN = 'https://cloud.r-project.org'))
 
+library(factoextra)
+library(ggord)
+# Perform PCA
+res.pca <- prcomp(your_data)
+# Extract loadings
+loadings <- res.pca$rotation
+
+loadings <- data.frame(pca_prsm_ldgs) %>% 
+  select(1:2)
+# Calculate absolute values of loadings for each PC
+abs_loadings <- abs(pca_prsm_ldgs)
+# Set a threshold (e.g., top 20% most influential variables)
+threshold <- quantile(abs_loadings, 0.8)
+# Create the biplot with filtering
+ggord(pca_prsm, scale = ifelse(abs_loadings > threshold, 1, 0))
+
 # Install ggord
 install.packages('ggord')
 require(ggord)
 
 psm_gg <- ggord(pca_prsm, prsma_sub$date,
-              cols=c("firebrick4","orange","yellowgreen","cornflowerblue","purple3","pink3","deeppink2"),ellipse=FALSE,vec_ext=4.5,
-              vectyp="solid",xlims=c(-4,3),ylims=c(-3,4),
+              cols=c("firebrick4","orange","yellowgreen","cornflowerblue",
+                     "purple3","pink3","deeppink2"),
+              vec_ext=4.5,vectyp="solid",xlims=c(-4,3),ylims=c(-3,4),
               repel=TRUE,grp_title="Bout",size=3,max.overlaps=50)
+psm_gg
+
+pca_new <- data.frame(pca_prsm$scores)
+pca_new$date <- prsma_sub$date
+
+pca_new <- pca_new %>% 
+  filter(Comp.1 >= -4 & Comp.1 <= 4 & Comp.2 >= -4 & Comp.2 <= 4) %>% 
+  group_by(date) %>% 
+  mutate(mean1 = mean(Comp.1),
+         mean2 = mean(Comp.2))
+
+date_cols <- unique(pca_new$date)
+
+
+
+ggplot(pca_new,aes(Comp.1,Comp.2,color=date))+
+  geom_point(alpha=0.01)+
+  geom_point(data=pca_new %>% 
+               group_by(date) %>% 
+               summarise_at(c('Comp.1','Comp.2'), mean),
+             size=2)+
+  scale_y_continuous(limits=c(-4,4))+
+  scale_x_continuous(limits=c(-4,4))+
+  scale_color_manual(values=c("firebrick4","orange","yellowgreen","cornflowerblue","purple3","pink3","deeppink2"))+
+  stat_ellipse(aes())+
+  scale_fill_manual(values=c("firebrick4","orange","yellowgreen","cornflowerblue","purple3","pink3","deeppink2"))+
+  theme_bw()
+
+
+empty <- data.frame(date = seq(as.Date("01-01-2000", format = "%m-%d-%Y"), as.Date("12-31-2022", format = "%m-%d-%Y"), by = "day")) %>%
+  mutate(doy = yday(date),
+         year = year(date))
+seasons <- read.csv('MetabolismModel/seasons_from_Robins_paper_long_withplaceholders.csv') %>%
+  select(-placeholder) %>%
+  mutate(date = as.Date(date,format = "%m/%d/%y"))
+DATA <- left_join(empty, seasons) %>%
+  fill(season, .direction="down")
+
+DATA$season <- factor(DATA$season, levels = c("Ice-on", "Spring", "Clearwater", "Early Summer", "Late Summer", "Fall"))
+
+new <- merge(x=pca_new,y=DATA,
+             by.x='date',by.y='date') %>% 
+  mutate(img = case_when(season == 'Spring' ~ 1,
+                         season == 'Clearwater' ~ 1,
+                         season == 'Early Summer' ~ 1,
+                         season == 'Late Summer' & date == '2021-09-05' ~ 1,
+                         season == 'Late Summer' & date == '2022-07-27' ~ 2,
+                         season == 'Fall' & date == '2021-11-02' ~ 1,
+                         season == 'Fall' & date == '2021-12-13' ~ 2))
+
+# ggplot(new,aes(wavelength,normal,color=season,fill=season,group=date))+
+#   geom_line(aes(linetype=factor(img)),size=1)+
+#   scale_color_manual(values=c("#73456D",  "#B2CCF1","#EE914A", "#9AD67A","#138E90")) +
+#   scale_fill_manual(values=c( "#73456D",  "#B2CCF1","#EE914A", "#9AD67A","#138E90")) +
+#   facet_wrap(~season)+
+#   # scale_x_log10()+
+#   labs(y='Normalized Rrs',
+#        x='Wavelength (nm)')+
+#   theme(legend.position = 'none')
+
+ggplot(new,aes(Comp.1,Comp.2,color=season))+
+  geom_point(alpha=0.01)+
+  geom_point(data=new %>%
+               group_by(date,season) %>%
+               summarise_at(c('Comp.1','Comp.2'), mean),
+             size=2)+
+  scale_y_continuous(limits=c(-4,4))+
+  scale_x_continuous(limits=c(-4,4))+
+  scale_color_manual(values=c("#73456D",  "#B2CCF1","#EE914A", "#9AD67A","#138E90"),name='Season') +
+  stat_ellipse(aes(lty=factor(img)),size=1)+
+  scale_fill_manual(values=c( "#73456D",  "#B2CCF1","#EE914A", "#9AD67A","#138E90")) +
+  theme_bw()+
+  # theme(legend.position='none')+
+  labs(y='Component 2',
+       x='Component 1')+
+  guides(linetype=guide_legend(title="Image"))
+
+  
 
 # get variances represented by each PC ----------------------------
   variances <- as_tibble(pca_prsm$sdev^2, rownames = "component") %>% #convert SD to variance
